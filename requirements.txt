@@ -4,7 +4,7 @@ jupyterlab==2.1.2
 jupyter_contrib_nbextensions==0.5.1
 matplotlib==3.2.1
 mypy==0.770
-nb_conda==2.2.1  # optional, useful for running R in Jupyter notebooks
+# nb_conda==2.2.1  # optional, useful for running R in Jupyter notebooks
 numpy==1.18.4
 pandas==1.0.3
 pillow==7.1.2
