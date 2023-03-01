@@ -1,4 +1,4 @@
-earthengine-api==0.1.221
+earthengine-api==0.1.342
 flake8==3.8.1
 jupyterlab==2.1.2
 jupyter_contrib_nbextensions==0.5.1
