@@ -1,106 +1,40 @@
-import sys
+from __future__ import annotations
+
+from collections.abc import Mapping
 import time
-from typing import Dict, List, Mapping, Tuple
 
 import numpy as np
 import tensorflow as tf
 
-sys.path.append('../')
-from utils.general import add_to_heap
 
-def parse_record_str(record_str: str):
-    '''Parses a record str and returns the feature map.
+def analyze_tfrecord_batch(iter_init: tf.Operation,
+                           batch_op: Mapping[str, tf.Tensor],
+                           total_num_images: int,
+                           nbands: int,
+                           k: int
+                           ) -> dict[str, np.ndarray]:
+    '''Calculates per-band statistics.
 
-    Args
-    - record_str: str, binary representation of Example message
-    '''
-    # parse binary string into Example message
-    ex = tf.train.Example.FromString(record_str)
-    features = ex.features  # get Features message within the Example
-    feature_map = features.feature  # get mapping from feature name strings to Feature
-    return feature_map
+    A good pixel is one where at least 1 band is > 0.
 
-
-def get_first_feature_map(tfrecord_path: str):
-    '''Gets feature_map dict of 1st TFRecord in a TFRecord file.
-
-    Args
-    - tfrecord_path: str, path to a TFRecord file with GZIP compression
-
-    Returns
-    - feature_map: protobuf map from feature name strings to Feature
-    '''
-    # Create an iterator over the TFRecords file. The iterator yields
-    # the binary representations of Example messages as strings.
-    options = tf.io.TFRecordOptions(tf.io.TFRecordCompressionType.GZIP)
-    iterator = tf.io.tf_record_iterator(tfrecord_path, options=options)
-
-    # get the first Example stored in the TFRecords file
-    record_str = next(iterator)
-    feature_map = parse_record_str(record_str)
-    return feature_map
-
-
-def get_feature_types(feature_map):
-    '''Gets the types and shapes of each feature in a given feature_map.
-
-    Args
-    - feature_map: protobuf map from feature name strings to Feature
-
-    Returns
-    - feature_types: dict, maps feature names (str) to tuple of (ft_type, ft_shape)
-    '''
-    # use the WhichOneof() method on messages with `oneof` fields to
-    # determine the type of the field
-    feature_types = {}
-    for name in feature_map.keys():
-        ft_type = feature_map[name].WhichOneof('kind')
-        ft_shape = np.array(feature_map[name].__getattribute__(ft_type).value).shape
-        feature_types[name] = (ft_type, ft_shape)
-    return feature_types
-
-
-def print_scalar_values(feature_map):
-    '''Prints scalar values from a TFRecord feature map.
-
-    Args
-    - feature_map: protobuf map from feature name strings to Feature
-    '''
-    for name in sorted(feature_map.keys()):
-        ft_type = feature_map[name].WhichOneof('kind')
-        ft_shape = np.array(feature_map[name].__getattribute__(ft_type).value).shape
-        if ft_type == 'float_list' and ft_shape == (1,):
-            value = feature_map[name].float_list.value[0]
-            print(f'{name}: {value}')
-        elif ft_type == 'bytes_list' and ft_shape == (1,):
-            value = feature_map[name].bytes_list.value[0].decode()
-            print(f'{name}: {value}')
-
-
-def analyze_tfrecord_batch(iter_init, batch_op, total_num_images, nbands, k=20):
-    '''
     Args
     - iter_init: tf.Op, operation to initialize iterator, or None if not needed
     - batch_op: dict, str -> tf.Tensor
         - 'images': tf.Tensor, type float32, shape [batch_size, 224, 224, nbands]
         - 'locs': tf.Tensor, type float32, shape [batch_size, 2], each row is [lat, lon]
-        - 'labels': tf.Tensor, type float32, shape [batch_size]
         - 'years': tf.Tensor, type int32, shape [batch_size]
     - total_num_images: int
     - nbands: int
-    - k: int, number of worst images to track
 
-    Returns: stats, k_worst
-    - stats: dict
-        - 'num_good_pixels': np.array, shape [images_count], type int, number of good pixels per image
-        - 'mins_nz': np.array, shape [nbands], type float64, min value per band excluding 0s
-        - 'maxs': np.array, shape [nbands], type float64, max value per band
-        - 'sums': np.array, shape [nbands], type float64, sum of values per band
-        - 'sum_sqs': np.array, shape [nbands], type float64, sum of squared-values per band
-        - 'nz_pixels': np.array, shape [nbands], type int64, number of non-zero pixels per band
-    - k_worst: list of length k, elements are (value, (label, image, loc, year))
-        - value = -number of good pixels
-        - tracks the top-k worst images (in terms of # of good pixels)
+    Returns: dict
+    - 'num_good_pixels': np.array, shape [total_num_images], type int, # of good pixels per image
+    - 'mins': np.array, shape [nbands], type float64, min value per band
+    - 'mins_nz': np.array, shape [nbands], type float64, min value per band excluding values <= 0
+    - 'mins_goodpx': np.array, shape [nbands], type float64, min value per band among good pixels
+    - 'maxs': np.array, shape [nbands], type float64, max value per band
+    - 'sums': np.array, shape [nbands], type float64, sum of values per band, excluding values <= 0
+    - 'sum_sqs': np.array, shape [nbands], type float64, sum of squared-values per band, excluding values <= 0
+    - 'nz_pixels': np.array, shape [nbands], type int64, # of non-zero pixels per band
     '''
     images_count = 0
 
@@ -113,16 +47,12 @@ def analyze_tfrecord_batch(iter_init, batch_op, total_num_images, nbands, k=20):
     sum_sqs = np.zeros(nbands, dtype=np.float64)
     nz_pixels = np.zeros(nbands, dtype=np.int64)
 
-    # heap to track the worst (by -nz_pixels) images
-    # - elements are (value, (label, image, loc))
-    k_worst = []
-
     batch_times = []
     processing_times = []
     start = time.time()
 
     # number of `good pixels` in each image
-    num_good_pixels = []
+    num_good_pixels: list[int] = []
 
     with tf.Session() as sess:
         if iter_init is not None:
@@ -132,8 +62,8 @@ def analyze_tfrecord_batch(iter_init, batch_op, total_num_images, nbands, k=20):
             try:
                 batch_start_time = time.time()
                 batch_np = sess.run(batch_op)
-                img_batch, loc_batch, label_batch, year_batch = \
-                    batch_np['images'], batch_np['locs'], batch_np['labels'], batch_np['years']
+                img_batch, year_batch = \
+                    batch_np['images'], batch_np['years']
                 batch_size = len(img_batch)
 
                 processing_start_time = time.time()
@@ -144,7 +74,6 @@ def analyze_tfrecord_batch(iter_init, batch_op, total_num_images, nbands, k=20):
                 viirs_mask = ~dmsp_mask
                 viirs_bands = [i for i in range(nbands) if i != nbands-2]
 
-                # a good pixel is one where at least 1 band is > 0
                 batch_goodpx = np.any(img_batch > 0, axis=3)
                 num_good_pixels_per_image = np.sum(batch_goodpx, axis=(1,2))
                 num_good_pixels.extend(num_good_pixels_per_image)
@@ -167,15 +96,10 @@ def analyze_tfrecord_batch(iter_init, batch_op, total_num_images, nbands, k=20):
                     mins_goodpx[bands] = np.minimum(mins_goodpx[bands], np.min(imgs_goodpx, axis=0))
                     maxs[bands] = np.maximum(maxs[bands], np.max(imgs, axis=(0,1,2)))
 
-                    # use dtype=np.float64 to avoid significant loss of precision in np.sum
+                    # use np.float64 to avoid significant loss of precision in np.sum
                     sums[bands] += np.sum(imgs_nonneg, axis=(0,1,2), dtype=np.float64)
                     sum_sqs[bands] += np.sum(imgs_nonneg ** 2, axis=(0,1,2), dtype=np.float64)
                     nz_pixels[bands] += np.sum(imgs > 0, axis=(0,1,2))
-
-                # update the k-worst heap
-                for i in range(batch_size):
-                    data = (label_batch[i], year_batch[i], tuple(loc_batch[i]), img_batch[i])
-                    add_to_heap(k_worst, k=k, value=-num_good_pixels_per_image[i], data=data)
 
                 processing_times.append(time.time() - processing_start_time)
 
@@ -197,7 +121,7 @@ def analyze_tfrecord_batch(iter_init, batch_op, total_num_images, nbands, k=20):
     print('Total time: {:0.3f}s, Num batches: {}'.format(total_time, len(batch_times)))
 
     stats = {
-        'num_good_pixels': num_good_pixels,
+        'num_good_pixels': np.array(num_good_pixels),
         'mins': mins,
         'mins_nz': mins_nz,
         'mins_goodpx': mins_goodpx,
@@ -206,28 +130,48 @@ def analyze_tfrecord_batch(iter_init, batch_op, total_num_images, nbands, k=20):
         'sum_sqs': sum_sqs,
         'nz_pixels': nz_pixels
     }
-    k_worst.sort()
-    return stats, k_worst
+    return stats
+
+
+def per_band_mean_std(stats: Mapping[str, np.ndarray],
+                      band_order: list[str]
+                      ) -> tuple[dict[str, np.number], dict]:
+    '''Calculates the per-band mean and standard deviation, only including
+    "good pixels". A good pixel is one where at least 1 band is > 0.
+
+    Args
+    - stats: dict
+        - 'num_good_pixels': np.array, shape [total_num_images], type int, # of good pixels per image
+        - 'sums': np.array, shape [nbands], type float64, sum of values per band, excluding values <= 0
+        - 'sum_sqs': np.array, shape [nbands], type float64, sum of squared-values per band, excluding values <= 0
+    - band_order: list of str, names of bands
+    '''
+    num_good_pixels, sums, sum_sqs = [
+        stats[k] for k in
+        ['num_good_pixels', 'sums', 'sum_sqs']
+    ]
+    num_total_pixels = np.sum(num_good_pixels)
+    means = sums / float(num_total_pixels)
+    stds = np.sqrt(sum_sqs/float(num_total_pixels) - means**2)
+
+    means = {
+        band_name: means[b]
+        for b, band_name in enumerate(band_order)
+    }
+    stds = {
+        band_name: stds[b]
+        for b, band_name in enumerate(band_order)
+    }
+    return means, stds
 
 
 def print_analysis_results(stats: Mapping[str, np.ndarray],
-                           band_order: List[str]) -> Tuple[Dict, Dict]:
-    '''
-    Args
-    - stats: dict
-      - 'num_good_pixels': np.array, shape [images_count], type int, number of good pixels per image
-      - 'mins': np.array, shape [nbands], type float64, min value per band
-      - 'mins_nz': np.array, shape [nbands], type float64, min value per band excluding non-positive
-      - 'mins_goodpx': np.array, shape [nbands], type float64, min value per band excluding bad pixels
-      - 'maxs': np.array, shape [nbands], type float64, max value per band
-      - 'sums': np.array, shape [nbands], type float64, sum of values per band
-      - 'sum_sqs': np.array, shape [nbands], type float64, sum of squared-values per band
-      - 'nz_pixels': np.array, shape [nbands], type int64, number of non-zero pixels per band
-    - band_order: list of str, names of bands
+                           band_order: list[str]) -> None:
+    '''Prints per-band statistics based on different pixel criteria.
 
-    Returns
-    - means: dict, band_name => np.float64, mean of each band excluding bad pixels
-    - stds: dict, band_name => np.float64, std. dev. of each band excluding bad pixels
+    Args
+    - stats: dict, see the output of analyze_tfrecord_batch() above.
+    - band_order: list of str, names of bands
     '''
     num_good_pixels, mins, mins_nz, mins_goodpx, maxs, sums, sum_sqs, nz_pixels = [
         stats[k] for k in
@@ -260,13 +204,3 @@ def print_analysis_results(stats: Mapping[str, np.ndarray],
     for i, band_name in enumerate(band_order):
         print('Band {:8s} - mean: {:10.6f}, std: {:>9.6f}, min: {:>11.6g}, max: {:11.6f}'.format(
             band_name, means[i], stds[i], mins_goodpx[i], maxs[i]))
-
-    means = {
-        band_name: means[b]
-        for b, band_name in enumerate(band_order)
-    }
-    stds = {
-        band_name: stds[b]
-        for b, band_name in enumerate(band_order)
-    }
-    return means, stds
