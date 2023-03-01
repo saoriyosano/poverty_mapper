@@ -1,6 +1,6 @@
-earthengine-api==0.1.236
-flake8==3.9.1
-jupyterlab==3.0.15
+earthengine-api==0.1.342
+flake8==3.8.1
+jupyterlab==2.1.2
 jupyter_contrib_nbextensions==0.5.1
 geopandas==0.7.0
 matplotlib==3.4.1
