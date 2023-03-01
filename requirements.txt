@@ -2,15 +2,17 @@ earthengine-api==0.1.342
 flake8==3.8.1
 jupyterlab==2.1.2
 jupyter_contrib_nbextensions==0.5.1
-matplotlib==3.2.1
-mypy==0.770
-nb_conda==2.2.1  # optional, useful for running R in Jupyter notebooks
-numpy==1.18.4
-pandas==1.0.3
-pillow==7.1.2
-scikit-learn==0.23.0
-scipy==1.4.1
+geopandas==0.7.0
+matplotlib==3.4.1
+mypy==0.812
+# nb_conda==2.2.1  # optional, useful for running R in Jupyter notebooks
+numpy==1.20.2
+pandas==1.2.4
+pillow==8.1.2
+scikit-learn==0.24.2
+scipy==1.6.3
 seaborn==0.10.1
-tqdm==4.46.0
-tensorflow-gpu==1.15.0  # only supports up to Python 3.7
-cartopy==0.18.0
+tqdm==4.60.0
+tensorflow-gpu==1.15.*  # for GPU support
+tensorflow==1.15.*  # for CPU
+# cartopy==0.18.0
