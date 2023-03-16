@@ -78,6 +78,9 @@ def surveyyear_to_range(survey_year: int, nl: bool = False) -> Tuple[str, str]:
     elif 2015 <= survey_year and survey_year <= 2017:
         start_date = '2015-1-1'
         end_date = '2017-12-31'
+    elif 2020 <= survey_year and survey_year <= 2022:
+        start_date = '2020-1-1'
+        end_date = '2022-12-31'
     else:
         raise ValueError(f'Invalid survey_year: {survey_year}. '
                          'Must be between 2009 and 2017 (inclusive)')
